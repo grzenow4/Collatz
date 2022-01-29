@@ -11,6 +11,10 @@
 #include "collatz.h"
 #include "sharedresults.h"
 
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+
 class Team
 {
 public:
@@ -117,22 +121,26 @@ public:
             futures[i] = promises[i].get_future();
 
         std::vector<std::thread> threads(r.size());
+        uint64_t thread_cnt = 0;
         for (auto i = 0; i < contestInput.size(); ++i)
         {
-            if (getCreatedThreads() >= getSize())
+            if (thread_cnt == getSize())
             {
                 r[idx] = futures[idx].get();
                 threads[idx].join();
                 idx++;
+                thread_cnt--;
             }
             std::thread t = createThread(
                     [&, n = contestInput[i], &promise = promises[i]] {
                 if (this->getSharedResults())
-                    promise.set_value(calcCollatzShare(n, std::shared_ptr<SharedResults>(this->getSharedResults())));
+                    promise.set_value(this->getSharedResults()->calcCollatzShare(n));
                 else
                     promise.set_value(calcCollatz(n));
             });
             threads[i] = std::move(t);
+            thread_cnt++;
+            assert(thread_cnt <= getSize());
         }
 
         while (idx < r.size())
@@ -205,7 +213,8 @@ class TeamPool : public Team
 public:
     TeamPool(uint32_t sizeArg, bool shareResults): Team(sizeArg, shareResults), pool(sizeArg) {}
 
-    virtual ContestResult runContest(ContestInput const & contestInput) {
+    virtual ContestResult runContest(ContestInput const & contestInput)
+    {
         ContestResult r;
         //TODO
         return r;
@@ -221,9 +230,33 @@ class TeamNewProcesses : public Team
 public:
     TeamNewProcesses(uint32_t sizeArg, bool shareResults): Team(sizeArg, shareResults) {}
 
-    virtual ContestResult runContest(ContestInput const & contestInput) {
+    virtual ContestResult runContest(ContestInput const & contestInput)
+    {
         ContestResult r;
-        //TODO
+        r.resize(contestInput.size());
+        pid_t pid;
+
+        for (auto i = 0; i < contestInput.size(); ++i)
+        {
+            switch (pid = fork()) {
+                case -1: // błąd
+                    exit(42);
+
+                case 0: // proces potomny
+                    r[i] = calcCollatz(contestInput[i]);
+                    return 0;
+
+                default: // proces macierzysty
+                    break;
+            }
+        }
+
+        for (int i = 0; i < r.size(); ++i)
+        {
+            if (wait(0) == -1)
+                exit(43);
+        }
+
         return r;
     }
 
@@ -235,7 +268,8 @@ class TeamConstProcesses : public Team
 public:
     TeamConstProcesses(uint32_t sizeArg, bool shareResults): Team(sizeArg, shareResults) {}
 
-    virtual ContestResult runContest(ContestInput const & contestInput) {
+    virtual ContestResult runContest(ContestInput const & contestInput)
+    {
         ContestResult r;
         //TODO
         return r;
@@ -249,7 +283,8 @@ class TeamAsync : public Team
 public:
     TeamAsync(uint32_t sizeArg, bool shareResults): Team(1, shareResults) {} // ignore size
 
-    virtual ContestResult runContest(ContestInput const & contestInput) {
+    virtual ContestResult runContest(ContestInput const & contestInput)
+    {
         ContestResult r;
         //TODO
         return r;
