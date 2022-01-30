@@ -33,12 +33,12 @@ inline uint64_t calcCollatz(InfInt n)
 }
 
 inline void calcCollatzConstHelp(const ContestInput & input,
-                          std::vector<std::promise<uint32_t>> & promises,
+                          std::vector<std::promise<uint64_t>> & promises,
                           const std::shared_ptr<SharedResults> & sr,
                           uint64_t idx,
-                          uint64_t thread_cnt)
+                          uint32_t thread_cnt)
 {
-    for (uint64_t i = idx; i < input.size(); i += thread_cnt)
+    for (auto i = idx; i < input.size(); i += thread_cnt)
         promises[i].set_value(sr ? sr->calcCollatzShare(input[i]) : calcCollatz(input[i]));
 }
 
