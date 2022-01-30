@@ -12,6 +12,7 @@
 #include "sharedresults.h"
 
 #include <unistd.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
@@ -132,12 +133,13 @@ public:
                 thread_cnt--;
             }
             std::thread t = createThread(
-                    [&, n = contestInput[i], &promise = promises[i]] {
-                if (this->getSharedResults())
-                    promise.set_value(this->getSharedResults()->calcCollatzShare(n));
-                else
-                    promise.set_value(calcCollatz(n));
-            });
+                    [&, n = contestInput[i], &promise = promises[i]]
+                    {
+                        if (this->getSharedResults())
+                            promise.set_value(this->getSharedResults()->calcCollatzShare(n));
+                        else
+                            promise.set_value(calcCollatz(n));
+                    });
             threads[i] = std::move(t);
             thread_cnt++;
             assert(thread_cnt <= getSize());
@@ -190,9 +192,11 @@ public:
         for (auto i = 0; i < thread_cnt; ++i)
         {
             auto sr = this->getSharedResults();
-            std::thread t = createThread([contestInput, &promises, &sr, i, thread_cnt] {
-                calcCollatzConstHelp(contestInput, promises, sr, i, thread_cnt);
-            });
+            std::thread t = createThread(
+                    [contestInput, &promises, &sr, i, thread_cnt]
+                    {
+                        calcCollatzConstHelp(contestInput, promises, sr, i, thread_cnt);
+                    });
             threads.push_back(std::move(t));
         }
 
@@ -230,17 +234,19 @@ public:
 
                 if (this->getSharedResults())
                 {
-                    auto future = pool.push([&, n = contestInput[idx]] {
-                        return this->getSharedResults()->calcCollatzShare(n);
-                    });
-                    futures.push_back(std::move(future));
+                    futures.push_back(pool.push(
+                            [&, n = contestInput[idx]]
+                            {
+                                return this->getSharedResults()->calcCollatzShare(n);
+                            }));
                 }
                 else
                 {
-                    auto future = pool.push([&, n = contestInput[idx]] {
-                        return calcCollatz(n);
-                    });
-                    futures.push_back(std::move(future));
+                    futures.push_back(pool.push(
+                            [&, n = contestInput[idx]]
+                            {
+                                return calcCollatz(n);
+                            }));
                 }
             }
         }
@@ -261,71 +267,39 @@ class TeamNewProcesses : public Team
 public:
     TeamNewProcesses(uint32_t sizeArg, bool shareResults): Team(sizeArg, shareResults) {}
 
-    int child(const InfInt & n, std::promise<uint32_t> &promise)
-    {
-        std::cout << "Jestem w child()\n";
-        promise.set_value(calcCollatz(n));
-        return 0;
-    }
-
-    virtual ContestResult runContest(ContestInput const & contestInput)
-    {
+    virtual ContestResult runContest(ContestInput const & contestInput) {
         ContestResult r;
         r.resize(contestInput.size());
-        uint64_t idx = 0;
-
         pid_t pid;
-        uint64_t process_cnt = 0;
-        std::vector<pid_t> children(r.size());
 
-        std::vector<std::promise<uint64_t>> promises(r.size());
-        for (auto & promise : promises)
-        {
-            std::promise<uint64_t> p;
-            promise = std::move(p);
-        }
+        std::string in[r.size()];
+        for (int i = 0; i < r.size(); ++i)
+            in[i] = "/tmp/" + std::to_string(i);
 
-        std::vector<std::future<uint64_t>> futures(r.size());
-        for (auto i = 0; i < futures.size(); ++i)
-            futures[i] = promises[i].get_future();
+        for (auto i = 0; i < contestInput.size(); ++i) {
+            if (mkfifo(in[i].c_str(), 0755) == -1)
+                exit(42);
 
-        for (auto i = 0; i < contestInput.size(); ++i)
-        {
-            if (process_cnt == getSize())
-            {
-                r[idx] = futures[idx].get();
-                int status = 0;
-                if (waitpid(children[idx], &status, 0) == -1)
-                    exit(42);
-                idx++;
-                process_cnt--;
-            }
-
-            switch (pid = fork())
-            {
-                case -1: // błąd
+            switch (pid = fork()) {
+                case -1: // błąd fork()
                     exit(42);
 
                 case 0: // proces potomny
-                    // child(contestInput[i], promises[i]);
-                    promises[i].set_value(calcCollatz(contestInput[i]));
+                    execlp("./new_process", "./new_process", in[i].c_str(), NULL);
                     break;
 
-                default:
-                    children[i] = pid;
-                    process_cnt++;
-                    assert(process_cnt <= getSize());
+                default: // proces macierzysty
+                    break;
             }
         }
 
-        while (idx < r.size())
-        {
-            r[idx] = futures[idx].get();
-            int status = 0;
-            if (waitpid(children[idx], &status, 0) == -1)
+        for (int i = 0; i < r.size(); ++i)
+            if (wait(0) == -1)
                 exit(42);
-            idx++;
-        }
+
+        for (int i = 0; i < r.size(); ++i)
+            if (unlink(in[i].c_str()))
+                exit(42);
 
         return r;
     }
@@ -345,29 +319,7 @@ public:
         uint64_t process_cnt = getSize();
         pid_t pid;
 
-        std::vector<std::promise<uint64_t>> promises(r.size());
-        for (auto & promise : promises)
-        {
-            std::promise<uint64_t> p;
-            promise = std::move(p);
-        }
-
-        std::vector<std::future<uint64_t>> futures(r.size());
-        for (auto i = 0; i < futures.size(); ++i)
-            futures[i] = promises[i].get_future();
-
-        for (auto i = 0; i < process_cnt; ++i)
-        {
-            //TODO - procesy robią rzeczy
-        }
-
-        for (auto i = 0; i < r.size(); ++i)
-            r[i] = futures[i].get();
-
-        for (int i = 0; i < process_cnt; ++i)
-        {
-            //TODO - wait();
-        }
+        //TODO
 
         return r;
     }
@@ -387,21 +339,21 @@ public:
 
         std::vector<std::future<uint64_t>> futures;
 
-        for (auto i = 0; i < contestInput.size(); ++i)
+        for (auto & input : contestInput)
         {
             if (this->getSharedResults())
             {
-                auto future = std::async([&, n = contestInput[i]] {
-                    return this->getSharedResults()->calcCollatzShare(n);
-                });
-                futures.push_back(std::move(future));
+                futures.push_back(std::async([&]
+                {
+                    return this->getSharedResults()->calcCollatzShare(input);
+                }));
             }
             else
             {
-                auto future = std::async([&, n = contestInput[i]] {
-                    return calcCollatz(n);
-                });
-                futures.push_back(std::move(future));
+                futures.push_back(std::async([&]
+                {
+                    return calcCollatz(input);
+                }));
             }
         }
 
